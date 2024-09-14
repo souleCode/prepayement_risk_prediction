@@ -56,7 +56,7 @@ input_data = {
 }
 
 # Bouton pour soumettre les données avec une clé unique
-if st.button('Faire une prédiction', key='predict_button'):
+if st.button('Make prediction', key='predict_button'):
     df = pd.DataFrame([input_data])
 
     y_class_pred, y_reg_pred = model_pipeline.predict(df)
