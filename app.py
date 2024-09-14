@@ -30,9 +30,9 @@ st.markdown(
     </style>
     """, unsafe_allow_html=True
 )
-st.markdown('<h1 class="title">MSB-Mortgage-Prediction App</h1>',
+st.markdown('<h1 class="title">MSB-Mortgage Prepayment Prediction App</h1>',
             unsafe_allow_html=True)
-st.header('Entrer les données pour prédiction')
+st.header('Enter your own details here for predictions')
 
 # Formulaire pour entrer les données avec des clés uniques
 input_data = {
@@ -60,11 +60,11 @@ if st.button('Faire une prédiction', key='predict_button'):
     df = pd.DataFrame([input_data])
 
     y_class_pred, y_reg_pred = model_pipeline.predict(df)
-    st.subheader('Résultats de la Prédiction')
+    st.subheader('Results of MSB-Mortgage  Prepayment Prediction App')
     if y_class_pred == 1:
         st.write('classification : EverDeliquent')
         # rounded_prediction = round(y_reg_pred, 2)
         st.write('Prediction of prepayment risk:', round(y_reg_pred[0], 2))
     else:
         st.write(
-            'Prédictions de classification :Not EverDeliquent, Prepayement risk prediction not needed')
+            'Prediction of classification :Not EverDeliquent, Prepayement risk prediction not needed')
