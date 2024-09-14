@@ -1,147 +1,70 @@
-# # Streamlit Application
-import numpy as np
 import streamlit as st
+import requests
 import joblib
 import pandas as pd
-from model import CustomPipeline
+import numpy as np
+from model import CustomPipelineWithFeatureSelection
 
-# Load the model
-pipeline = joblib.load('model/pipeline.pkl')
 
-# Chargement des données
-data = pd.read_csv('datasets/enhanced_feature_engineering_data.csv')
+# load model
+with open('model/pipeline.pkl', 'rb') as f:
+    model_pipeline = joblib.load(f)
 
-# Imputation des valeurs manquantes
-cols_to_impute_with_mean = ['prepayment', 'monthly_income', 'DTI_fraction']
-for col in cols_to_impute_with_mean:
-    data[col] = pd.to_numeric(data[col])
-    data[col].fillna(data[col].mean())
+st.set_page_config(
+    page_title="msb-app", page_icon=":star:")
 
-# Séparation des caractéristiques et des cibles
-X = data.drop(['EverDelinquent', 'prepayment'], axis=1)
-y_class = data['EverDelinquent']
-y_reg = data['prepayment']
+# st.title('MSB-Mortgage-Prediction App')
 
-# Sélection des caractéristiques
-X_selected = X[['DTI', 'OrigUPB', 'OrigInterestRate', 'monthly_rate', 'monthly_payment',
-                'total_payment', 'interest_amount', 'cur_principal', 'DTI_fraction',
-                'monthly_income']]
-
-# Streamlit page configuration
-st.set_page_config(page_title="Mortgage Prediction Application", layout="wide")
-
-# Custom CSS for styling
-st.markdown("""
+st.markdown(
+    """
     <style>
-        .stButton > button {
-            background-color: #4CAF50; /* Green */
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            text-align: center;
-            text-decoration: none;
-            display: inline-block;
-            font-size: 16px;
-            margin: 4px 2px;
-            cursor: pointer;
-            border-radius: 5px;
-        }
-        .stButton > button:hover {
-            background-color: #45a049; /* Darker green */
-        }
-        .stNumberInput > div {
-            margin-bottom: 10px;
-        }
-        .stSelectbox > div {
-            margin-bottom: 10px;
-        }
-        .stTitle {
-            font-size: 36px;
-            font-weight: bold;
-            color: #333;
-        }
-        .stHeader {
-            font-size: 28px;
-            font-weight: bold;
-            color: #555;
-            margin-top: 20px;
-        }
-        .stWrite {
-            font-size: 16px;
-            color: #666;
-        }
+    .title {
+        background: linear-gradient(to right, #ff7e5f, #feb47b);  /* linear gradient */
+        -webkit-background-clip: text;
+        color: transparent;
+        font-size: 50px;
+        font-weight: bold;
+        font-family: 'Courier New', Courier, monospace;  /* change font */
+        text-align: center;
+    }
     </style>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True
+)
+st.markdown('<h1 class="title">MSB-Mortgage-Prediction App</h1>',
+            unsafe_allow_html=True)
+st.header('Entrer les données pour prédiction')
 
-st.title(":blue[Mortgage Prediction Application]")
+# Formulaire pour entrer les données avec des clés uniques
+input_data = {
+    'CreditScore': st.text_input('Enter the Credit Score', key='credit_score'),
+    'Units': st.selectbox('Choose the Unit', [0, 1], key='unit_selector'),
+    'PropertyType': st.text_input('Enter the PropertyType', key='property_type'),
+    'OrigLoanTerm': st.text_input('Enter the OrigLoanTerm', key='orig_loanTerm'),
+    'NumBorrowers': st.text_input('Enter the NumBorrowers', key='num_borrowers'),
+    'MonthsDelinquent': st.selectbox('Choose the MonthsDelinquent', [0, 1], key='months_delinquent'),
+    'MonthsInRepayment': st.text_input('Enter the MonthsInRepayment', key='months_in_repayment'),
+    'Occupancy_O': st.selectbox('Choose the Occupancy', [0, 'juste 0'], key='occupancy_o'),
+    'MonthlyIncome': st.text_input('Enter the MonthlyIncome', key='monthly_income'),
+    'InterestAmount': st.text_input('Enter the InterestAmount', key='interest_amount'),
+    'Totalpayment': st.text_input('Enter the Totalpayment', key='total_payment'),
+    'MonthlyInstallment': st.text_input('Enter the MonthlyInstallment', key='monthly_installment'),
+    'OrigUPB': st.text_input('Enter the OrigUPB', key='orig_upb'),
+    'CurrentUPB': st.text_input('Enter the CurrentUPB', key='current_upb'),
+    'DTI': st.text_input('Enter the DTI', key='dti'),
+    'LoanSeqNum': st.text_input('Enter the LoanSeqNum', key='loan_seq_num'),
+    'FirstTimeHomebuyer': st.selectbox('Choose the FirstTimeHomebuyer', [0, 1], key='first_time_homebuyer'),
+}
 
-# Collect user inputs
-st.header(":green[Enter Details]")
+# Bouton pour soumettre les données avec une clé unique
+if st.button('Faire une prédiction', key='predict_button'):
+    df = pd.DataFrame([input_data])
 
-# Input fields for the simplified dataframe
-col1, col2 = st.columns(2)
-
-with col1:
-    DTI = st.sidebar.slider('DTI', float(X_selected['DTI'].min()), float(
-        X_selected['DTI'].max()), float(X_selected['DTI'].mean()))
-    OrigUPB = st.sidebar.slider('OrigUPB', float(X_selected['OrigUPB'].min()), float(
-        X_selected['OrigUPB'].max()), float(X_selected['OrigUPB'].mean()))
-    OrigInterestRate = st.sidebar.slider('OrigInterestRate', float(X_selected['OrigInterestRate'].min(
-    )), float(X_selected['OrigInterestRate'].max()), float(X_selected['OrigInterestRate'].mean()))
-    monthly_rate = st.sidebar.slider('monthly_rate', float(X_selected['monthly_rate'].min(
-    )), float(X_selected['monthly_rate'].max()), float(X_selected['monthly_rate'].mean()))
-    monthly_payment = st.sidebar.slider('monthly_payment', float(X_selected['monthly_payment'].min(
-    )), float(X_selected['monthly_payment'].max()), float(X_selected['monthly_payment'].mean()))
-
-with col2:
-
-    total_payment = st.sidebar.slider('total_payment', float(X_selected['total_payment'].min(
-    )), float(X_selected['total_payment'].max()), float(X_selected['total_payment'].mean()))
-    interest_amount = st.sidebar.slider('interest_amount', float(X_selected['interest_amount'].min(
-    )), float(X_selected['interest_amount'].max()), float(X_selected['interest_amount'].mean()))
-    cur_principal = st.sidebar.slider('cur_principal', float(X_selected['cur_principal'].min(
-    )), float(X_selected['cur_principal'].max()), float(X_selected['cur_principal'].mean()))
-    DTI_fraction = st.sidebar.slider('DTI_fraction', float(X_selected['DTI_fraction'].min(
-    )), float(X_selected['DTI_fraction'].max()), float(X_selected['DTI_fraction'].mean()))
-    monthly_income = st.sidebar.slider('monthly_income', float(X_selected['monthly_income'].min(
-    )), float(X_selected['monthly_income'].max()), float(X_selected['monthly_income'].mean()))
-
-# Create a DataFrame from user inputs
-user_input_df = pd.DataFrame([{
-    'DTI': DTI,
-    'OrigUPB': OrigUPB,
-    'OrigInterestRate': OrigInterestRate,
-    'monthly_rate': monthly_rate,
-    'monthly_payment': monthly_payment,
-    'total_payment': total_payment,
-    'interest_amount': interest_amount,
-    'cur_principal': cur_principal,
-    'DTI_fraction': DTI_fraction,
-    'monthly_income': monthly_income
-}])
-
-# Display the DataFrame to the user
-st.write("### :orange[User Input DataFrame:]")
-st.write(user_input_df)
-
-# Predict and display results
-if st.button('Predict Classification and Regression'):
-    try:
-        # Get classification and regression predictions
-        y_class_pred, y_reg_pred = pipeline.predict(user_input_df)
-
-        # Display classification result
-        st.subheader("Prediction Results")
+    y_class_pred, y_reg_pred = model_pipeline.predict(df)
+    st.subheader('Résultats de la Prédiction')
+    if y_class_pred == 1:
+        st.write('classification : EverDeliquent')
+        # rounded_prediction = round(y_reg_pred, 2)
+        st.write('Prediction of prepayment risk:', round(y_reg_pred[0], 2))
+    else:
         st.write(
-            f"**Classification Prediction (Ever Delinquent):** {y_class_pred[0]}")
-
-        # Check if regression data exists
-        if y_reg_pred.size > 0:
-            st.write(
-                f"**Regression Prediction (Prepayment):** {abs(y_reg_pred[0])}")
-        else:
-            st.write(
-                "No data available for regression prediction as classification result is negative.")
-
-    except Exception as e:
-        st.error(f"An error occurred during prediction: {str(e)}")
+            'Prédictions de classification :Not EverDeliquent, Prepayement risk prediction not needed')

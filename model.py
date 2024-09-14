@@ -1,128 +1,205 @@
-from sklearn.pipeline import Pipeline
 import joblib
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.pipeline import Pipeline, make_pipeline
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import LabelEncoder
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from pandas.api.types import is_numeric_dtype
-import numpy as np
-
-from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.ensemble import IsolationForest
-from imblearn.over_sampling import SMOTE  # Import SMOTE
-
-
-data = pd.read_csv('datasets/enhanced_feature_engineering_data.csv')
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge
+from sklearn.feature_selection import RFE
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.naive_bayes import GaussianNB
+from sklearn.tree import DecisionTreeClassifier
 
 
-cols_to_impute_with_mean = ['prepayment', 'monthly_income', 'DTI_fraction']
+data = pd.read_csv('datasets/LoanExport.csv', low_memory=False)
+# data.info()
 
-for col in cols_to_impute_with_mean:
-    data[col] = pd.to_numeric(data[col])
-    data[col].fillna(data[col].mean(), inplace=True)
-# df.method({'col': value}, inplace=True)
-# print(data.isnull().sum().sort_values(ascending=False))
+
+# monthly interest rate
+data['OrigInterestRate_Monthly'] = np.round(
+    (data['OrigInterestRate'] / 12) / 100, 4)
+
+# monthly installment
+
+
+def calculateEmi(principal, monthly_interest_rate, loan_term_months):
+    numerator = (1 + monthly_interest_rate) ** loan_term_months
+    denominator = numerator - 1
+    interest = numerator / denominator
+    emi = principal * monthly_interest_rate * interest
+    return np.int64(emi)
+
+
+data['MonthlyInstallment'] = data.apply(
+    lambda features: calculateEmi(
+        principal=features['OrigUPB'],
+        monthly_interest_rate=features['OrigInterestRate_Monthly'],
+        loan_term_months=features['OrigLoanTerm']), axis=1)
+
+# current unpaid principal
+
+
+def get_currentUPB(principal, monthly_interest_rate, monthly_installment,
+                   payments_made):
+    monthly_interest = monthly_interest_rate * principal
+    monthly_paid_principal = monthly_installment - monthly_interest
+    unpaid_principal = principal - (monthly_paid_principal * payments_made)
+    return np.int32(unpaid_principal)
+
+
+data['CurrentUPB'] = data.apply(
+    lambda features: get_currentUPB(
+        monthly_interest_rate=features['OrigInterestRate_Monthly'],
+        principal=features['OrigUPB'],
+        monthly_installment=features['MonthlyInstallment'],
+        payments_made=features['MonthsInRepayment']), axis=1)
+
+# monthly income
+
+
+def calculate_monthly_income(dti, emi):
+    dti = dti if dti < 1 else dti / 100
+    # Calculate montly income
+    if dti == 0:
+        monthly_income = emi
+    else:
+        monthly_income = emi / dti
+    return np.int64(monthly_income)
+
+
+data['MonthlyIncome'] = data.apply(
+    lambda features: calculate_monthly_income(
+        dti=features['DTI'],
+        emi=features['MonthlyInstallment']), axis=1)
+
+# prepayment
+
+
+def calculatePrepayment(dti, monthly_income):
+    if (dti < 40):
+        prepayment = monthly_income / 2
+    else:
+        prepayment = monthly_income * 3 / 4
+    return np.int64(prepayment)
+
+
+data['Prepayment'] = data.apply(
+    lambda features: calculatePrepayment(
+        dti=features['DTI'],
+        monthly_income=features['MonthlyIncome']), axis=1)
+data['Prepayment'] = (data['Prepayment']*24)-(data['MonthlyInstallment']*24)
+
+# total payment and interest amount
+data['Totalpayment'] = data['MonthlyInstallment'] * data['OrigLoanTerm']
+data['InterestAmount'] = data['Totalpayment'] - data['OrigUPB']
+
+
+le = LabelEncoder()
+cat_col = ['FirstTimeHomebuyer', 'PPM', 'NumBorrowers', 'LoanSeqNum', 'PropertyState',
+           'ProductType', 'ServicerName', 'PropertyType', 'Channel', 'SellerName']
+data[cat_col] = data[cat_col].apply(le.fit_transform)
+
+one_col = ['LoanPurpose', 'Occupancy']
+data_one = pd.get_dummies(data[one_col], drop_first=True)
+data_one = data_one.astype(int)
+
+data = pd.concat([data, data_one], axis=1)
+data.drop(['LoanPurpose', 'Occupancy'], inplace=True, axis=1)
 
 # Split data into features and target
-X = data.drop(['EverDelinquent', 'prepayment'], axis=1)
+X = data.drop(['EverDelinquent', 'Prepayment', 'MSA', 'PostalCode'], axis=1)
 y_class = data['EverDelinquent']
-y_reg = data['prepayment']
-
-# First I try to select the 10th best features
-X_selected = X[['DTI', 'OrigUPB', 'OrigInterestRate', 'monthly_rate', 'monthly_payment',
-                'total_payment', 'interest_amount', 'cur_principal', 'DTI_fraction',
-                'monthly_income']]
+y_reg = data['Prepayment']
 
 # Split into training and testing sets
 X_train, X_test, y_class_train, y_class_test, y_reg_train, y_reg_test = train_test_split(
-    X_selected, y_class, y_reg, test_size=0.2, random_state=42
+    X, y_class, y_reg, test_size=0.2, random_state=42
 )
 
 
-class CustomPipeline(BaseEstimator, TransformerMixin):
-    def __init__(self):
-        # Classification pipeline
-        self.classification_pipeline = Pipeline([
-            ('preprocessor', ColumnTransformer([
-                ('num', SimpleImputer(strategy='median'),
-                 X_selected.select_dtypes(include=['number']).columns)
-            ])),
-            ('clf', LogisticRegression(random_state=42))
-        ])
+class CustomPipelineWithFeatureSelection(BaseEstimator, TransformerMixin):
+    def __init__(self, clf, reg, clf_features, reg_features):
+        self.clf = clf
+        self.reg = reg
+        self.clf_features = clf_features
+        self.reg_features = reg_features
+        self.scaler_clf = StandardScaler()
+        self.scaler_reg = StandardScaler()
 
-        # Regression pipeline
-        self.regression_pipeline = Pipeline([
-            ('preprocessor', ColumnTransformer([
-                ('num', SimpleImputer(strategy='median'),
-                 X_selected.select_dtypes(include=['number']).columns)
-            ])),
-            ('poly', PolynomialFeatures(degree=2)),  # Optional
-            ('reg', LinearRegression())
-        ])
+    def fit(self, X, y_class, y_reg):
+        # Ensure X is a DataFrame and contains the specified features
+        if not isinstance(X, pd.DataFrame):
+            raise ValueError("X should be a pandas DataFrame")
 
-    def fit(self, X_selected, y_class, y_reg):
-        # Outlier detection
-        iso = IsolationForest(contamination=0.01, random_state=42)
-        y_outliers = iso.fit_predict(X_selected)
-        X_filtered = X_selected[y_outliers == 1]
-        y_class_filtered = y_class[y_outliers == 1]
-        y_reg_filtered = y_reg[y_outliers == 1]
+        # Extract features for classification and scale them
+        X_clf = X[self.clf_features]
+        X_clf_scaled = self.scaler_clf.fit_transform(X_clf)
+        self.clf.fit(X_clf_scaled, y_class)
 
-        # Apply SMOTE to handle class imbalance after outlier filtering
-        smote = SMOTE(random_state=42)
-        X_smote, y_class_smote = smote.fit_resample(
-            X_filtered, y_class_filtered)
+        # Filter data where classification is 1
+        X_filtered = X[y_class == 1]
+        y_reg_filtered = y_reg[y_class == 1]
 
-        # Fit classification pipeline on the balanced data
-        self.classification_pipeline.fit(X_smote, y_class_smote)
-
-        # Predict on full data
-        y_class_pred = self.classification_pipeline.predict(X_selected)
-
-        # Filter data based on classification predictions for regression
-        X_filtered_reg = X_selected.loc[y_class_pred == 1]
-        y_reg_filtered = y_reg.loc[y_class_pred == 1]
-
-        # Ensure there are samples for regression
-        if not X_filtered_reg.empty and not y_reg_filtered.empty:
-            self.regression_pipeline.fit(X_filtered_reg, y_reg_filtered)
-        else:
-            raise ValueError("No samples for regression after filtering")
+        # Extract features for regression and scale them
+        X_filtered_reg = X_filtered[self.reg_features]
+        X_filtered_reg_scaled = self.scaler_reg.fit_transform(X_filtered_reg)
+        self.reg.fit(X_filtered_reg_scaled, y_reg_filtered)
         return self
 
-    def predict(self, X_selected):
-        y_class_pred = self.classification_pipeline.predict(X_selected)
-        print(f"Classification predictions: {y_class_pred}")
+    def predict(self, X):
+        # Ensure X is a DataFrame and contains the specified features
+        if not isinstance(X, pd.DataFrame):
+            raise ValueError("X should be a pandas DataFrame")
 
-        # Filter data for regression prediction
-        X_filtered_reg = X_selected.loc[y_class_pred == 1]
-        print(f"Filtered data for regression: {X_filtered_reg.shape}")
+        # Extract features for classification and scale them
+        X_clf = X[self.clf_features]
+        X_clf_scaled = self.scaler_clf.transform(X_clf)
+        y_class_pred = self.clf.predict(X_clf_scaled)
 
-        # If filtered data is empty, handle gracefully
-        if X_filtered_reg.empty:
-            print("No data to perform regression")
-            return y_class_pred, np.array([])  # or return some default value
+        # Initialize predictions for regression with NaNs
+        y_reg_pred = np.full(X.shape[0], np.nan)
 
-        # Predict regression if data exists
-        y_reg_pred = self.regression_pipeline.predict(X_filtered_reg)
+        # Filter data where classification is 1
+        X_filtered = X[y_class_pred == 1]
+        if len(X_filtered) > 0:
+            # Extract features for regression and scale them
+            X_filtered_reg = X_filtered[self.reg_features]
+            X_filtered_reg_scaled = self.scaler_reg.transform(X_filtered_reg)
+            y_reg_pred_filtered = self.reg.predict(X_filtered_reg_scaled)
+            # Assign regression predictions to corresponding positions
+            y_reg_pred[y_class_pred == 1] = y_reg_pred_filtered
         return y_class_pred, y_reg_pred
 
 
-# Create and fit the custom pipeline
-pipeline = CustomPipeline()
+# Define feature sets
+clf_features = ['CreditScore', 'Units', 'PropertyType', 'OrigLoanTerm',
+                'MonthsDelinquent', 'MonthsInRepayment', 'Occupancy_O']
+
+reg_features = ['MonthlyIncome', 'InterestAmount', 'Totalpayment', 'MonthlyInstallment',
+                'OrigUPB', 'CurrentUPB', 'DTI', 'LoanSeqNum', 'NumBorrowers', 'FirstTimeHomebuyer']
+# Create and fit the custom pipeline with Random Forest Regressor
+pipeline = CustomPipelineWithFeatureSelection(
+    clf=GaussianNB(),
+    reg=RandomForestRegressor(n_estimators=100, max_depth=10,
+                              min_samples_split=5, min_samples_leaf=5, random_state=42),
+    clf_features=clf_features,
+    reg_features=reg_features
+)
+
+# Fit the pipeline
 pipeline.fit(X_train, y_class_train, y_reg_train)
+
+# Make predictions
+y_class_pred, y_reg_pred = pipeline.predict(X_test)
+
+# print("Predictions class:", y_class_pred)
+# print("Predictions reg:", y_reg_pred)
 
 
 # Save the pipeline
 joblib.dump(pipeline, 'model/pipeline.pkl')
-
-# Load and use the pipeline for predictions
-# loaded_pipeline = joblib.load('combined_pipeline.pkl')
-# y_class_pred, y_reg_pred = loaded_pipeline.predict(X_test)
+# print(data['FirstTimeHomebuyer'])
